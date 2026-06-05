@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- KaTeX impacchettato localmente dentro il bundle (.app) -> preview offline -->
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  }
+  #stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding: 24px 18px;
+    box-sizing: border-box;
+    text-align: center;
+  }
+  #render { font-size: 1.7rem; line-height: 1.4; }
+  /* Colore del testo coerente con Aqua / Dark Mode */
+  #render, #render * { color: #0a0a0a; }
+  @media (prefers-color-scheme: dark) {
+    #render, #render * { color: #f2f2f7; }
+  }
+  .placeholder {
+    color: #9aa0a6 !important;
+    font-style: italic;
+    font-size: 1rem;
+  }
+  .katex-error {
+    color: #cc2f2f !important;
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+  <div id="stage"><div id="render"><span class="placeholder">la formula apparirà qui…</span></div></div>
+<script>
+  // Coda: se renderLatex viene chiamata prima che KaTeX sia pronto, la
+  // applichiamo appena lo script differito ha finito di caricarsi.
+  var __pending = null;
+  var __ready = false;
+
+  function _doRender(s) {
+    var el = document.getElementById('render');
+    if (s === null || s === undefined || String(s).trim() === '') {
+      el.innerHTML = '<span class="placeholder">la formula apparirà qui…</span>';
+      return;
+    }
+    try {
+      katex.render(String(s), el, {
+        displayMode: true,
+        throwOnError: false,
+        errorColor: '#cc2f2f',
+        strict: false,
+        trust: false
+      });
+    } catch (e) {
+      el.innerHTML = '<span class="katex-error">' +
+        String(e.message || e).replace(/[&<>]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+        }) + '</span>';
+    }
+  }
+
+  // Funzione pubblica chiamata da app.py via evaluateJavaScript.
+  function renderLatex(s) {
+    if (__ready) { _doRender(s); }
+    else { __pending = s; }
+  }
+
+  window.addEventListener('load', function () {
+    __ready = true;
+    if (__pending !== null) { _doRender(__pending); __pending = null; }
+  });
+</script>
+</body>
+</html>
