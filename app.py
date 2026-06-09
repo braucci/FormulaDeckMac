@@ -26,8 +26,9 @@ from Cocoa import (
     NSViewMaxXMargin, NSViewMaxYMargin, NSViewMinXMargin, NSPasteboard,
     NSPasteboardTypeString, NSSplitView, NSMenu, NSMenuItem,
     NSApplicationActivationPolicyRegular, NSAlert, NSBezelBorder,
-    NSImageView, NSWorkspace,
+    NSImageView, NSWorkspace, NSViewFrameDidChangeNotification,
 )
+from Foundation import NSNotificationCenter
 from Foundation import NSURL
 from WebKit import WKWebView, WKWebViewConfiguration
 
@@ -67,10 +68,17 @@ GRID_COLS = 4
 BTN_W, BTN_H = 52, 38
 GRID_PAD = 10
 GRID_GAP = 6
+# layout adattivo della griglia
+CELL_TARGET = 52       # passo ideale (pulsante + gap) per scegliere le colonne
+GRID_MIN_COLS = 3
+GRID_MAX_COLS = 6
+BTN_MIN_W = 40
+SIDEBAR_MIN = 200      # larghezza minima/massima trascinabile della sidebar
+SIDEBAR_MAX = 460
 
 # Metadati dell'applicazione -------------------------------------------------
 APP_NAME = "FormulaDeck"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 APP_AUTHOR = "B. Raucci"
 APP_WEBSITE = "https://www.raucci.net"
 APP_TAGLINE = "Editor nativo di formule LaTeX"
@@ -289,11 +297,22 @@ class AppDelegate(NSObject):
 
         body_h = WIN_H - TOOLBAR_H
 
-        # ----- SIDEBAR (sinistra, altezza flessibile) -----------------------
+        # ----- CONTENITORE RIDIMENSIONABILE: split orizzontale --------------
+        # A sinistra la sidebar (tavolozza), a destra l'area di lavoro. Il
+        # divisore è trascinabile: la larghezza della tavolozza diventa un
+        # grado di libertà controllato dall'utente.
+        outer = NSSplitView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, WIN_W, body_h))
+        outer.setVertical_(True)         # divisore verticale -> panes affiancati
+        outer.setDividerStyle_(2)        # thin
+        outer.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        outer.setDelegate_(self)
+        content.addSubview_(outer)
+
+        # ----- SIDEBAR (sinistra) -------------------------------------------
         sidebar = NSView.alloc().initWithFrame_(
             NSMakeRect(0, 0, SIDEBAR_W, body_h))
-        sidebar.setAutoresizingMask_(NSViewHeightSizable | NSViewMaxXMargin)
-        content.addSubview_(sidebar)
+        self._sidebar = sidebar
 
         # selettore di categoria
         self.catPopup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
@@ -311,17 +330,18 @@ class AppDelegate(NSObject):
         self.gridScroll.setHasVerticalScroller_(True)
         self.gridScroll.setBorderType_(NSBezelBorder)
         self.gridScroll.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        # la griglia si ridispone quando lo scroll cambia larghezza
+        self.gridScroll.setPostsFrameChangedNotifications_(True)
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "gridResized:", NSViewFrameDidChangeNotification, self.gridScroll)
         sidebar.addSubview_(self.gridScroll)
 
         # ----- AREA DESTRA: split verticale (sorgente sopra, preview sotto) --
+        rw = WIN_W - SIDEBAR_W
         right = NSSplitView.alloc().initWithFrame_(
-            NSMakeRect(SIDEBAR_W, 0, WIN_W - SIDEBAR_W, body_h))
+            NSMakeRect(0, 0, rw, body_h))
         right.setVertical_(False)        # divisione orizzontale -> panes impilati
         right.setDividerStyle_(2)        # thin
-        right.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        content.addSubview_(right)
-
-        rw = WIN_W - SIDEBAR_W
 
         # sorgente LaTeX (NSTextView in NSScrollView)
         srcScroll = NSScrollView.alloc().initWithFrame_(
@@ -349,8 +369,32 @@ class AppDelegate(NSObject):
         right.addSubview_(srcScroll)        # pane superiore (sorgente)
         right.addSubview_(self.webView)     # pane inferiore (anteprima)
 
+        # composizione dello split esterno e posizione iniziale del divisore
+        outer.addSubview_(sidebar)
+        outer.addSubview_(right)
+        outer.adjustSubviews()
+        outer.setPosition_ofDividerAtIndex_(SIDEBAR_W, 0)
+
         self.window.makeKeyAndOrderFront_(None)
         self.window.makeFirstResponder_(self.textView)
+
+    # -- delegato dello split esterno (vincoli sulla tavolozza) -------------
+    def splitView_constrainMinCoordinate_ofSubviewAt_(self, sv, proposed, idx):
+        if idx == 0:
+            return float(SIDEBAR_MIN)
+        return proposed
+
+    def splitView_constrainMaxCoordinate_ofSubviewAt_(self, sv, proposed, idx):
+        if idx == 0:
+            return float(SIDEBAR_MAX)
+        return proposed
+
+    def splitView_shouldAdjustSizeOfSubview_(self, sv, subview):
+        # al ridimensionamento della finestra la tavolozza resta fissa,
+        # l'area di lavoro assorbe la variazione.
+        if subview is getattr(self, "_sidebar", None):
+            return False
+        return True
 
     @objc.python_method
     def _add_toolbar_button(self, parent, x, title, action):
@@ -371,27 +415,11 @@ class AppDelegate(NSObject):
         items = core.PALETTES[category]["items"]
         self._templates = [it["insert"] for it in items]
 
-        rows = (len(items) + GRID_COLS - 1) // GRID_COLS
-        cell_w = BTN_W + GRID_GAP
-        cell_h = BTN_H + GRID_GAP
-        width = self.gridScroll.contentSize().width
-        height = max(self.gridScroll.contentSize().height,
-                     GRID_PAD * 2 + rows * cell_h)
-
-        grid = FlippedView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, width, height))
-
-        # centratura orizzontale della griglia nel viewport
-        total_w = GRID_COLS * BTN_W + (GRID_COLS - 1) * GRID_GAP
-        x0 = max(GRID_PAD, (width - total_w) / 2)
-
+        grid = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
+        self._gridButtons = []
         for idx, it in enumerate(items):
-            r = idx // GRID_COLS
-            c = idx % GRID_COLS
-            bx = x0 + c * cell_w
-            by = GRID_PAD + r * cell_h
             btn = NSButton.alloc().initWithFrame_(
-                NSMakeRect(bx, by, BTN_W, BTN_H))
+                NSMakeRect(0, 0, BTN_W, BTN_H))
             btn.setTitle_(it["glyph"])
             btn.setBezelStyle_(NSBezelStyleRegularSquare)
             btn.setFont_(NSFont.systemFontOfSize_(15))
@@ -400,10 +428,54 @@ class AppDelegate(NSObject):
             btn.setTarget_(self)
             btn.setAction_("symbolClicked:")
             grid.addSubview_(btn)
+            self._gridButtons.append(btn)
 
+        self._gridView = grid
         self.gridScroll.setDocumentView_(grid)
-        # porta lo scroll in cima
+        self._layout_grid()
         grid.scrollPoint_((0, 0))
+
+    @objc.python_method
+    def _layout_grid(self):
+        """Dispone i pulsanti in funzione della larghezza disponibile.
+
+        Numero di colonne e larghezza dei pulsanti sono grandezze *derivate*
+        dalla larghezza del viewport: la griglia non eccede mai il contenitore
+        (niente ritaglio) e si ridispone a ogni ridimensionamento. La larghezza
+        del document view è ancorata a quella del clip view, quindi non compare
+        mai una barra di scorrimento orizzontale.
+        """
+        if not getattr(self, "_gridView", None):
+            return
+        btns = self._gridButtons
+        n = len(btns)
+        if n == 0:
+            return
+        avail = self.gridScroll.contentSize().width
+        usable = max(BTN_MIN_W, avail - 2 * GRID_PAD)
+
+        cols = int(round(usable / CELL_TARGET))
+        cols = max(GRID_MIN_COLS, min(GRID_MAX_COLS, cols))
+        cols = min(cols, n)
+
+        btn_w = (usable - (cols - 1) * GRID_GAP) / cols
+        btn_w = max(BTN_MIN_W, btn_w)
+        cell_h = BTN_H + GRID_GAP
+        rows = (n + cols - 1) // cols
+
+        for idx, btn in enumerate(btns):
+            r, c = divmod(idx, cols)
+            bx = GRID_PAD + c * (btn_w + GRID_GAP)
+            by = GRID_PAD + r * cell_h
+            btn.setFrame_(NSMakeRect(bx, by, btn_w, BTN_H))
+
+        height = GRID_PAD * 2 + rows * cell_h
+        clip_h = self.gridScroll.contentSize().height
+        self._gridView.setFrame_(NSMakeRect(0, 0, avail, max(clip_h, height)))
+
+    def gridResized_(self, notification):
+        self._layout_grid()
+
 
     # -- azioni Cocoa (selettori reali, terminano con '_') ------------------
     def categoryChanged_(self, sender):

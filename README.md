@@ -9,6 +9,8 @@ Editor nativo di formule LaTeX per macOS: comporre espressioni matematiche da un
 Autore: **B. Raucci** — [www.raucci.net](https://www.raucci.net)
 La voce di menu *FormulaDeck → Informazioni su FormulaDeck* apre la scheda con autore, versione e collegamento al sito.
 
+**Novità 1.1.0** — la tavolozza dei simboli è ora ridimensionabile (divisore trascinabile) e la griglia è *responsiva*: numero di colonne e larghezza dei pulsanti si adattano alla larghezza disponibile, così nessun simbolo viene mai tagliato.
+
 ---
 
 ## Architettura

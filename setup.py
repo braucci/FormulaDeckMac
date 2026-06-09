@@ -26,8 +26,8 @@ OPTIONS = {
         "CFBundleName": "FormulaDeck",
         "CFBundleDisplayName": "FormulaDeck",
         "CFBundleIdentifier": "io.github.braucci.formuladeck",
-        "CFBundleVersion": "1.0.0",
-        "CFBundleShortVersionString": "1.0.0",
+        "CFBundleVersion": "1.1.0",
+        "CFBundleShortVersionString": "1.1.0",
         "LSMinimumSystemVersion": "11.0",
         # Abilita l'adattamento nativo a Dark Mode.
         "NSRequiresAquaSystemAppearance": False,
